@@ -308,22 +308,54 @@ def init_connection():
     try:
         # Try to get DATABASE_URL from environment or Streamlit secrets
         database_url = os.getenv('DATABASE_URL')
+        
+        # Try Streamlit secrets (for Streamlit Cloud) - check if secrets exist first
         if not database_url:
-            # Try Streamlit secrets (for Streamlit Cloud)
             try:
-                database_url = st.secrets.get('DATABASE_URL')
-            except:
+                # Check if secrets are available
+                if hasattr(st, 'secrets') and 'DATABASE_URL' in st.secrets:
+                    database_url = st.secrets['DATABASE_URL']
+            except (AttributeError, KeyError, TypeError):
+                # Secrets not available or DATABASE_URL not in secrets
                 pass
         
         if not database_url:
             st.error("❌ DATABASE_URL not found.")
+            
+            # Debug information
+            with st.expander("🔍 Debug Information", expanded=False):
+                st.write("**Environment Variables:**")
+                env_var = os.getenv('DATABASE_URL')
+                st.write(f"- DATABASE_URL from os.getenv(): {'Found' if env_var else 'Not found'}")
+                
+                st.write("**Streamlit Secrets:**")
+                try:
+                    if hasattr(st, 'secrets'):
+                        secrets_keys = list(st.secrets.keys()) if hasattr(st.secrets, 'keys') else []
+                        st.write(f"- Secrets available: Yes")
+                        st.write(f"- Keys in secrets: {secrets_keys}")
+                        st.write(f"- DATABASE_URL in secrets: {'Yes' if 'DATABASE_URL' in st.secrets else 'No'}")
+                    else:
+                        st.write("- Secrets not available")
+                except Exception as e:
+                    st.write(f"- Error checking secrets: {str(e)}")
+            
             st.info("""
             **For local development:** Create a `.env` file with:
             ```
             DATABASE_URL=postgresql://...
             ```
             
-            **For Streamlit Cloud:** Add `DATABASE_URL` in your app's Secrets (Settings → Secrets).
+            **For Streamlit Cloud:** 
+            1. Go to your app on [share.streamlit.io](https://share.streamlit.io)
+            2. Click "☰" → "Settings" → "Secrets"
+            3. Add this (replace with your actual connection string):
+            ```toml
+            DATABASE_URL = "postgresql://postgres.[PROJECT_REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres"
+            ```
+            4. Click "Save" and wait for redeploy
+            
+            **Important:** Use the Connection Pooler URI (port 6543), not the direct connection (port 5432)
             """)
             st.stop()
         
