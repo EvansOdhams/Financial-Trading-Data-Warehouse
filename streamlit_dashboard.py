@@ -361,7 +361,7 @@ st.sidebar.title("📊 Navigation")
 page = st.sidebar.radio(
     "Select Dashboard",
     ["🏠 Overview", "💼 Portfolio Analytics", "👥 Trader Performance", 
-     "⚠️ Risk Analysis", "📈 Time Series", "🔍 Data Explorer"]
+     "⚠️ Risk Analysis", "📈 Time Series", "🔍 Data Explorer", "🏗️ Data Warehouse Architecture"]
 )
 
 # ============================================================================
@@ -1205,6 +1205,486 @@ elif page == "🔍 Data Explorer":
                 st.dataframe(df, width='stretch', height=400)
             else:
                 st.error("Only SELECT queries are allowed for security reasons.")
+
+# ============================================================================
+# DATA WAREHOUSE ARCHITECTURE PAGE
+# ============================================================================
+
+elif page == "🏗️ Data Warehouse Architecture":
+    st.title("🏗️ Data Warehouse Architecture")
+    st.markdown("---")
+    
+    # Tabs for different views
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📐 Star Schema", "📊 Dimension Tables", "📈 Fact Tables", 
+        "🔗 Relationships", "📋 Table Explorer"
+    ])
+    
+    # ========================================================================
+    # STAR SCHEMA TAB
+    # ========================================================================
+    with tab1:
+        st.subheader("📐 Star Schema Overview")
+        st.markdown("""
+        The Financial Trading Data Warehouse uses a **Star Schema** design pattern, which consists of:
+        - **1 Central Fact Table**: `fact_trades` (transactional grain)
+        - **Multiple Dimension Tables**: Providing descriptive context for analysis
+        """)
+        
+        # Star Schema Visualization
+        st.markdown("### Schema Diagram")
+        
+        # Create a visual representation using Plotly
+        fig_schema = go.Figure()
+        
+        # Fact table in center
+        fact_x, fact_y = 0, 0
+        fig_schema.add_trace(go.Scatter(
+            x=[fact_x], y=[fact_y],
+            mode='markers+text',
+            marker=dict(size=100, color='#f59e0b', symbol='square'),
+            text=['fact_trades'],
+            textposition='middle center',
+            textfont=dict(size=14, color='white', weight='bold'),
+            name='Fact Table',
+            hovertemplate='<b>fact_trades</b><br>Central Fact Table<br><extra></extra>'
+        ))
+        
+        # Dimension tables around the fact table
+        dim_tables = [
+            ('dim_date', -2, 1.5),
+            ('dim_time', 2, 1.5),
+            ('dim_security', -2, -1.5),
+            ('dim_trader', 2, -1.5),
+            ('dim_account', 0, 2),
+            ('dim_exchange', 0, -2),
+            ('dim_counterparty', -2.5, 0),
+            ('dim_strategy', 2.5, 0)
+        ]
+        
+        for dim_name, x, y in dim_tables:
+            fig_schema.add_trace(go.Scatter(
+                x=[x], y=[y],
+                mode='markers+text',
+                marker=dict(size=80, color='#1e3a8a', symbol='circle'),
+                text=[dim_name.replace('dim_', '')],
+                textposition='middle center',
+                textfont=dict(size=11, color='white'),
+                name='Dimension',
+                hovertemplate=f'<b>{dim_name}</b><br>Dimension Table<br><extra></extra>',
+                showlegend=False
+            ))
+            
+            # Draw line from dimension to fact
+            fig_schema.add_trace(go.Scatter(
+                x=[x, fact_x], y=[y, fact_y],
+                mode='lines',
+                line=dict(color='#475569', width=2, dash='dot'),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+        
+        fig_schema.update_layout(
+            title="Star Schema Visualization",
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-4, 4]),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-3, 3]),
+            height=600,
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            showlegend=True,
+            legend=dict(x=0.02, y=0.98, bgcolor='rgba(30, 41, 59, 0.8)')
+        )
+        
+        st.plotly_chart(fig_schema, use_container_width=True)
+        
+        # Schema Description
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            #### Fact Table
+            - **fact_trades**: Central transactional table
+              - Grain: One row per executed trade
+              - Measures: quantity, price, trade_value, commission, realized_pnl
+              - Partitioned: Monthly RANGE partitioning on trade_timestamp
+            """)
+        
+        with col2:
+            st.markdown("""
+            #### Dimension Tables
+            - **Time Dimensions**: dim_date, dim_time
+            - **Entity Dimensions**: dim_security, dim_trader, dim_account
+            - **Reference Dimensions**: dim_exchange, dim_counterparty, dim_strategy
+            - **SCD Type 2**: dim_security, dim_trader (temporal tracking)
+            """)
+    
+    # ========================================================================
+    # DIMENSION TABLES TAB
+    # ========================================================================
+    with tab2:
+        st.subheader("📊 Dimension Tables")
+        
+        # Get list of dimension tables
+        dim_tables_query = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name LIKE 'dim_%'
+            ORDER BY table_name;
+        """
+        dim_tables = run_query(dim_tables_query)
+        
+        if not dim_tables.empty:
+            selected_dim = st.selectbox(
+                "Select Dimension Table to Explore",
+                options=dim_tables['table_name'].tolist()
+            )
+            
+            if selected_dim:
+                # Get table metadata
+                col_metadata = run_query(f"""
+                    SELECT 
+                        column_name,
+                        data_type,
+                        character_maximum_length,
+                        is_nullable,
+                        column_default
+                    FROM information_schema.columns
+                    WHERE table_name = '{selected_dim}'
+                    ORDER BY ordinal_position;
+                """)
+                
+                # Get row count
+                row_count = run_query(f"SELECT COUNT(*) as count FROM {selected_dim};")
+                count = row_count['count'].iloc[0] if not row_count.empty else 0
+                
+                # Display metadata
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Table Name", selected_dim)
+                with col2:
+                    st.metric("Row Count", f"{count:,}")
+                with col3:
+                    st.metric("Columns", len(col_metadata))
+                
+                st.markdown("---")
+                
+                # Column information
+                st.markdown("### Column Information")
+                st.dataframe(
+                    col_metadata,
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                # Sample data
+                st.markdown("### Sample Data (First 10 Rows)")
+                sample_data = run_query(f"SELECT * FROM {selected_dim} LIMIT 10;")
+                if not sample_data.empty:
+                    st.dataframe(sample_data, use_container_width=True, height=300)
+                else:
+                    st.info("No data available in this table.")
+                
+                # Special information for SCD Type 2 tables
+                if selected_dim in ['dim_security', 'dim_trader']:
+                    st.markdown("---")
+                    st.info(f"""
+                    **SCD Type 2 (Slowly Changing Dimension)**
+                    
+                    This table uses Type 2 tracking to maintain historical versions:
+                    - `is_current`: Boolean flag indicating current version
+                    - `effective_date`: When this version became active
+                    - `expiry_date`: When this version was superseded (NULL for current)
+                    - `version_number`: Sequential version identifier
+                    """)
+    
+    # ========================================================================
+    # FACT TABLES TAB
+    # ========================================================================
+    with tab3:
+        st.subheader("📈 Fact Tables")
+        
+        # Get list of fact tables
+        fact_tables_query = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name LIKE 'fact_%'
+            ORDER BY table_name;
+        """
+        fact_tables = run_query(fact_tables_query)
+        
+        if not fact_tables.empty:
+            selected_fact = st.selectbox(
+                "Select Fact Table to Explore",
+                options=fact_tables['table_name'].tolist()
+            )
+            
+            if selected_fact:
+                # Get table metadata
+                col_metadata = run_query(f"""
+                    SELECT 
+                        column_name,
+                        data_type,
+                        character_maximum_length,
+                        is_nullable,
+                        column_default
+                    FROM information_schema.columns
+                    WHERE table_name = '{selected_fact}'
+                    ORDER BY ordinal_position;
+                """)
+                
+                # Get row count
+                row_count = run_query(f"SELECT COUNT(*) as count FROM {selected_fact};")
+                count = row_count['count'].iloc[0] if not row_count.empty else 0
+                
+                # Get statistics for numeric columns
+                numeric_cols = col_metadata[col_metadata['data_type'].isin(['numeric', 'integer', 'bigint', 'double precision', 'real', 'decimal'])]
+                
+                # Display metadata
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Table Name", selected_fact)
+                with col2:
+                    st.metric("Row Count", f"{count:,}")
+                with col3:
+                    st.metric("Columns", len(col_metadata))
+                
+                st.markdown("---")
+                
+                # Column information
+                st.markdown("### Column Information")
+                st.dataframe(
+                    col_metadata,
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                # Key metrics for fact_trades
+                if selected_fact == 'fact_trades':
+                    st.markdown("---")
+                    st.markdown("### Key Metrics")
+                    
+                    metrics = run_query("""
+                        SELECT 
+                            COUNT(*) as total_trades,
+                            SUM(trade_value) as total_volume,
+                            SUM(realized_pnl) as total_pnl,
+                            AVG(trade_value) as avg_trade_value,
+                            MIN(trade_timestamp) as earliest_trade,
+                            MAX(trade_timestamp) as latest_trade
+                        FROM fact_trades;
+                    """)
+                    
+                    if not metrics.empty:
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Total Trades", f"{metrics['total_trades'].iloc[0]:,}")
+                            st.metric("Total Volume", f"${metrics['total_volume'].iloc[0]:,.0f}")
+                        with col2:
+                            st.metric("Total P&L", f"${metrics['total_pnl'].iloc[0]:,.0f}")
+                            st.metric("Avg Trade Value", f"${metrics['avg_trade_value'].iloc[0]:,.2f}")
+                        with col3:
+                            st.metric("Earliest Trade", str(metrics['earliest_trade'].iloc[0])[:10])
+                            st.metric("Latest Trade", str(metrics['latest_trade'].iloc[0])[:10])
+                
+                # Sample data
+                st.markdown("---")
+                st.markdown("### Sample Data (First 10 Rows)")
+                sample_data = run_query(f"SELECT * FROM {selected_fact} LIMIT 10;")
+                if not sample_data.empty:
+                    st.dataframe(sample_data, use_container_width=True, height=300)
+                else:
+                    st.info("No data available in this table.")
+                
+                # Partitioning information for fact_trades
+                if selected_fact == 'fact_trades':
+                    st.markdown("---")
+                    st.info("""
+                    **Table Partitioning**
+                    
+                    This table is partitioned by month using RANGE partitioning on `trade_timestamp`:
+                    - Improves query performance through partition pruning
+                    - Enables efficient data archival and maintenance
+                    - Each partition contains one month of trading data
+                    """)
+    
+    # ========================================================================
+    # RELATIONSHIPS TAB
+    # ========================================================================
+    with tab4:
+        st.subheader("🔗 Table Relationships")
+        
+        # Get foreign key relationships
+        relationships = run_query("""
+            SELECT
+                tc.table_name AS fact_table,
+                kcu.column_name AS fact_column,
+                ccu.table_name AS dimension_table,
+                ccu.column_name AS dimension_key,
+                tc.constraint_name
+            FROM information_schema.table_constraints AS tc
+            JOIN information_schema.key_column_usage AS kcu
+                ON tc.constraint_name = kcu.constraint_name
+            JOIN information_schema.constraint_column_usage AS ccu
+                ON ccu.constraint_name = tc.constraint_name
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+                AND (tc.table_name LIKE 'fact_%' OR tc.table_name LIKE 'dim_%')
+            ORDER BY tc.table_name, kcu.column_name;
+        """)
+        
+        if not relationships.empty:
+            st.markdown("### Foreign Key Relationships")
+            st.dataframe(
+                relationships,
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Create relationship diagram
+            st.markdown("---")
+            st.markdown("### Relationship Diagram")
+            
+            # Group relationships by fact table
+            fact_rels = {}
+            for _, row in relationships.iterrows():
+                fact = row['fact_table']
+                if fact not in fact_rels:
+                    fact_rels[fact] = []
+                fact_rels[fact].append({
+                    'dimension': row['dimension_table'],
+                    'fact_col': row['fact_column'],
+                    'dim_col': row['dimension_key']
+                })
+            
+            # Display relationships
+            for fact_table, dims in fact_rels.items():
+                st.markdown(f"#### {fact_table}")
+                for rel in dims:
+                    st.markdown(f"  - **{rel['fact_col']}** → `{rel['dimension']}.{rel['dim_col']}`")
+        else:
+            st.info("No foreign key relationships found in the schema.")
+        
+        # Show materialized views
+        st.markdown("---")
+        st.markdown("### Materialized Views")
+        
+        mv_query = """
+            SELECT 
+                schemaname,
+                matviewname,
+                pg_size_pretty(pg_total_relation_size(schemaname||'.'||matviewname)) as size
+            FROM pg_matviews
+            WHERE schemaname = 'public'
+            ORDER BY matviewname;
+        """
+        materialized_views = run_query(mv_query)
+        
+        if not materialized_views.empty:
+            st.dataframe(
+                materialized_views,
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No materialized views found.")
+    
+    # ========================================================================
+    # TABLE EXPLORER TAB
+    # ========================================================================
+    with tab5:
+        st.subheader("📋 Interactive Table Explorer")
+        
+        # Get all tables
+        all_tables = run_query("""
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_type = 'BASE TABLE'
+            ORDER BY table_name;
+        """)
+        
+        if not all_tables.empty:
+            selected_table = st.selectbox(
+                "Select Table",
+                options=all_tables['table_name'].tolist()
+            )
+            
+            if selected_table:
+                # Table statistics
+                stats = run_query(f"""
+                    SELECT 
+                        COUNT(*) as row_count,
+                        pg_size_pretty(pg_total_relation_size('{selected_table}')) as table_size
+                    FROM {selected_table};
+                """)
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if not stats.empty:
+                        st.metric("Row Count", f"{stats['row_count'].iloc[0]:,}")
+                with col2:
+                    if not stats.empty:
+                        st.metric("Table Size", stats['table_size'].iloc[0])
+                
+                # Column details with data types
+                st.markdown("### Column Details")
+                columns_info = run_query(f"""
+                    SELECT 
+                        c.column_name,
+                        c.data_type,
+                        c.character_maximum_length,
+                        c.is_nullable,
+                        CASE 
+                            WHEN pk.column_name IS NOT NULL THEN 'PRIMARY KEY'
+                            WHEN fk.column_name IS NOT NULL THEN 'FOREIGN KEY'
+                            ELSE ''
+                        END as key_type
+                    FROM information_schema.columns c
+                    LEFT JOIN (
+                        SELECT ku.column_name
+                        FROM information_schema.table_constraints tc
+                        JOIN information_schema.key_column_usage ku
+                            ON tc.constraint_name = ku.constraint_name
+                        WHERE tc.table_name = '{selected_table}'
+                            AND tc.constraint_type = 'PRIMARY KEY'
+                    ) pk ON c.column_name = pk.column_name
+                    LEFT JOIN (
+                        SELECT ku.column_name
+                        FROM information_schema.table_constraints tc
+                        JOIN information_schema.key_column_usage ku
+                            ON tc.constraint_name = ku.constraint_name
+                        WHERE tc.table_name = '{selected_table}'
+                            AND tc.constraint_type = 'FOREIGN KEY'
+                    ) fk ON c.column_name = fk.column_name
+                    WHERE c.table_name = '{selected_table}'
+                    ORDER BY c.ordinal_position;
+                """)
+                
+                st.dataframe(columns_info, use_container_width=True, hide_index=True)
+                
+                # Data preview
+                st.markdown("### Data Preview")
+                preview_rows = st.slider("Number of rows to display", 5, 100, 20)
+                preview_data = run_query(f"SELECT * FROM {selected_table} LIMIT {preview_rows};")
+                
+                if not preview_data.empty:
+                    st.dataframe(preview_data, use_container_width=True, height=400)
+                else:
+                    st.info("No data available in this table.")
+                
+                # Export option
+                st.markdown("---")
+                if st.button(f"📥 Export {selected_table} Data (CSV)"):
+                    export_data = run_query(f"SELECT * FROM {selected_table};")
+                    if not export_data.empty:
+                        csv = export_data.to_csv(index=False)
+                        st.download_button(
+                            label="Download CSV",
+                            data=csv,
+                            file_name=f"{selected_table}.csv",
+                            mime="text/csv"
+                        )
 
 # ============================================================================
 # FOOTER
