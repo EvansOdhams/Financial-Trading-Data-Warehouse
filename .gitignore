@@ -1,0 +1,8 @@
+# Ignore everything
+*
+
+# But include these specific files
+!streamlit_dashboard.py
+!README_DASHBOARD.md
+!Financial_Trading_Data_Warehouse.ipynb
+!.gitignore
