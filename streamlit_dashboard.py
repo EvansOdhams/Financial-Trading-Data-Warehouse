@@ -306,9 +306,25 @@ st.markdown("""
 def init_connection():
     """Initialize database connection using SQLAlchemy"""
     try:
+        # Try to get DATABASE_URL from environment or Streamlit secrets
         database_url = os.getenv('DATABASE_URL')
         if not database_url:
-            st.error("❌ DATABASE_URL not found in environment variables. Please create a .env file.")
+            # Try Streamlit secrets (for Streamlit Cloud)
+            try:
+                database_url = st.secrets.get('DATABASE_URL')
+            except:
+                pass
+        
+        if not database_url:
+            st.error("❌ DATABASE_URL not found.")
+            st.info("""
+            **For local development:** Create a `.env` file with:
+            ```
+            DATABASE_URL=postgresql://...
+            ```
+            
+            **For Streamlit Cloud:** Add `DATABASE_URL` in your app's Secrets (Settings → Secrets).
+            """)
             st.stop()
         
         # Parse and fix connection string if needed
@@ -339,18 +355,26 @@ engine = init_connection()
 def run_query(query, params=None):
     """Execute SQL query and return DataFrame using SQLAlchemy"""
     try:
-        # Use pandas read_sql with SQLAlchemy engine
-        # For parameterized queries, params should be a dict with :param_name format
+        # Use pandas read_sql with engine directly
         if params and isinstance(params, dict):
+            # For parameterized queries - use text() and pass params
             query_obj = text(query)
+            # Convert params dict values to list for pandas compatibility
+            # pandas read_sql expects params as dict, but SQLAlchemy 2.0 needs proper binding
             df = pd.read_sql(query_obj, engine, params=params)
         else:
             # For non-parameterized queries
-            query_obj = text(query) if not isinstance(query, str) or ':' in query else query
+            if ':' in query and not params:
+                # Query has :params but no params - might cause issues, use text()
+                query_obj = text(query)
+            else:
+                query_obj = text(query) if isinstance(query, str) else query
             df = pd.read_sql(query_obj, engine)
         return df
     except Exception as e:
         st.error(f"Query error: {str(e)}")
+        import traceback
+        st.error(f"Full error: {traceback.format_exc()}")
         return pd.DataFrame()
 
 # ============================================================================
@@ -605,11 +629,11 @@ elif page == "💼 Portfolio Analytics":
             )
             
             if len(date_range) == 2:
-                # Build account filter
-                if len(account_list) > 1:
-                    account_filter = f"({','.join(map(str, account_list))})"
-                else:
-                    account_filter = f"({account_list[0]})"
+                # Build account filter - use parameterized query
+                account_placeholders = ','.join([f':acc_{i}' for i in range(len(account_list))])
+                account_params = {f'acc_{i}': acc for i, acc in enumerate(account_list)}
+                account_params['start_date'] = date_range[0]
+                account_params['end_date'] = date_range[1]
                 
                 portfolio_timeline = run_query(f"""
                     SELECT 
@@ -619,11 +643,11 @@ elif page == "💼 Portfolio Analytics":
                         COUNT(*) as trade_count
                     FROM fact_trades ft
                     JOIN dim_date d ON ft.date_key = d.date_key
-                    WHERE ft.account_key IN {account_filter}
+                    WHERE ft.account_key IN ({account_placeholders})
                         AND d.date BETWEEN :start_date AND :end_date
                     GROUP BY d.date
                     ORDER BY d.date;
-                """, params={'start_date': date_range[0], 'end_date': date_range[1]})
+                """, params=account_params)
                 
                 if not portfolio_timeline.empty:
                     fig = make_subplots(
@@ -1526,10 +1550,13 @@ elif page == "🏗️ Data Warehouse Architecture":
             FROM information_schema.table_constraints AS tc
             JOIN information_schema.key_column_usage AS kcu
                 ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
             JOIN information_schema.constraint_column_usage AS ccu
                 ON ccu.constraint_name = tc.constraint_name
+                AND ccu.table_schema = tc.table_schema
             WHERE tc.constraint_type = 'FOREIGN KEY'
-                AND (tc.table_name LIKE 'fact_%' OR tc.table_name LIKE 'dim_%')
+                AND tc.table_schema = 'public'
+                AND (tc.table_name LIKE 'fact_%' OR tc.table_name LIKE 'dim_%' OR kcu.table_name LIKE 'fact_%' OR kcu.table_name LIKE 'dim_%')
             ORDER BY tc.table_name, kcu.column_name;
         """)
         
